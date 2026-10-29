@@ -189,6 +189,14 @@ def manager(config: str | None = None):
     system_manager.run(config=_config)
 
 
+@cli.command(short_help="Read the battery's BMS and send the readings to MQTT (see bms_address, mqtt_host)")
+@click.option("--config", type=click.Path(file_okay=True, dir_okay=False))
+def telemetry(config: str | None = None):
+    from pvpi.services import telemetry as telemetry_service  # its Bluetooth and MQTT packages are optional
+
+    telemetry_service.run(PvPiConfig.from_file(path=config))
+
+
 @cli.command(short_help="Launch the web dashboard")
 @click.option("--config", type=click.Path(file_okay=True, dir_okay=False))
 def dashboard(config: str | None = None):

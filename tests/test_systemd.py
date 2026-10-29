@@ -23,7 +23,12 @@ def test_an_installed_package_keeps_its_config_in_the_users_config_folder(tmp_pa
 
 
 def test_the_services_names_are_public():
-    assert systemd.SERVICES == ["pvpi_uart.service", "pvpi_manager.service", "pvpi_dashboard.service"]
+    assert systemd.SERVICES == [
+        "pvpi_uart.service",
+        "pvpi_manager.service",
+        "pvpi_telemetry.service",
+        "pvpi_dashboard.service",
+    ]
 
 
 def _install(tmp_path, monkeypatch, dashboard: bool | None, disabled=()):
