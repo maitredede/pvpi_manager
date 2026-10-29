@@ -69,3 +69,7 @@ def test_schedules_are_next_to_the_config_and_an_unworkable_one_is_refused(tmp_p
 def test_mqtt_password_is_next_to_the_config(tmp_path):
     config = PvPiConfig.from_file(str(tmp_path / "config.json"))
     assert config.mqtt_password_path == tmp_path / "mqtt-password"
+
+
+def test_an_empty_field_from_the_form_is_none():
+    assert PvPiConfig.model_validate({"bms_address": "", "mqtt_host": " "}).bms_address is None

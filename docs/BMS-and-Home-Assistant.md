@@ -9,14 +9,16 @@ The optional telemetry service (`pvpi_telemetry`) can:
 
 Each part is turned on by its own setting, `bms_address` and `mqtt_host`; with neither set, the service stops at once.
 
-## 1. Install the extras
+## 1. Install
+
+Reading a BMS needs Python 3.12 or later (Raspberry Pi OS 13 "trixie" has 3.13) and the `bms` extra:
 
 ```shell
-uv sync --extra bms --extra mqtt
+uv sync --extra bms
 uv run pvpi install
 ```
 
-Leave out the extra you don't need. `pvpi install` adds the `pvpi_telemetry` service (run it again if you installed before this service existed).
+`pvpi install` adds the `pvpi_telemetry` service (run it again if you installed before this service existed). When you update, sync with the extra again (`uv sync --extra bms`): a plain `uv sync` removes it, and the service then stops with "Can't read a 'daly_bms' BMS" in its log. MQTT alone needs no extra.
 
 ## 2. The BMS
 
@@ -40,7 +42,12 @@ Then set it in the config, with the BMS's type if it isn't a Daly (the module na
 
 The service keeps the Bluetooth connection open between readings, and connects again when it's lost. The latest readings are kept in `bms.json` in the log folder, which the dashboard shows.
 
-On a Pi 3 or 4, Bluetooth needs the PL011 UART: keep the PV Pi on `/dev/ttyS0` (see [Getting started](Getting-started.md#2-turn-on-the-uart)) rather than using `dtoverlay=disable-bt`.
+On a Pi 3 or 4, Bluetooth needs the PL011 UART, so the PV Pi goes on the mini UART, `/dev/ttyS0`. If you had turned Bluetooth off with `dtoverlay=disable-bt`, change it in this order, or the manager loses the PV Pi (and with it the low battery shutdown):
+
+1. set `uart_port` to `/dev/ttyS0` in the config, and `uv run pvpi restart`;
+2. remove `dtoverlay=disable-bt` from `/boot/firmware/config.txt`, and reboot.
+
+When it can't be read, the service waits longer before each new try (up to 10 minutes), as scanning takes the radio the Wi-Fi shares on a Pi 3 or 4.
 
 ## 3. Home Assistant (MQTT)
 
@@ -52,7 +59,7 @@ install -m 600 /dev/null mqtt-password
 nano mqtt-password
 ```
 
-The MQTT settings are set in `config.json` by hand: the dashboard, which anyone on your network can reach, can't change them, so it can't change where the password is sent.
+The MQTT settings are set in `config.json` by hand: the dashboard, which anyone on your network can reach, doesn't show them and refuses to change them, so it can't send the password elsewhere. It can still change the other settings, the BMS's address among them. The connection to the broker isn't encrypted: use it on a network you trust.
 
 | Option | Default | What it's for |
 |---|---|---|
@@ -76,7 +83,7 @@ The topics, all retained:
 | `pvpi/<hostname>/status` | `online`, or `offline` when the service stops |
 | `pvpi/<hostname>/bms/status` | `online`, or `offline` while the BMS can't be read |
 
-The PV Pi's own charge current can't show discharging (it only measures charging): the BMS's current and power can.
+Readings not updated for three periods (the PV Pi or the BMS can't be read) show as unavailable. The entity ids come from `default_entity_id`, which needs a recent Home Assistant (tested with 2026.10); with an older one you get ids made from the names. The PV Pi's own charge current can't show discharging (it only measures charging): the BMS's current and power can.
 
 ## Checking it
 
@@ -85,6 +92,6 @@ systemctl status pvpi_telemetry
 journalctl -u pvpi_telemetry -f
 ```
 
-`Couldn't read the BMS: … not found` usually means another client (Home Assistant, a phone) is connected to the BMS, or it's out of range.
+`Couldn't read the BMS: … not found` usually means another client (Home Assistant, a phone) is connected to the BMS, or it's out of range. The service clears a connection BlueZ kept for itself (e.g. after it was killed) before each scan.
 
 Next: [Configuration](Configuration.md)
