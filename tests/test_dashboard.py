@@ -329,3 +329,14 @@ def test_bms_readings(dashboard, tmp_path):
     (tmp_path / "logs").mkdir(exist_ok=True)
     (tmp_path / "logs" / "bms.json").write_text('{"time": "2026-10-29T20:00:00", "bms_soc": 87}')
     assert get("/api/bms") == (200, {"time": "2026-10-29T20:00:00", "bms_soc": 87})
+
+
+def test_mqtt_settings_are_not_changed_from_the_dashboard(dashboard, tmp_path):
+    get = dashboard()
+    original = get("/api/config")[1]["values"]
+    unchanged = {"mqtt_host": original["mqtt_host"], "keep_for_days": 14}
+    assert get("/api/config", "PUT", {"original": original, "values": unchanged})[0] == 200
+    original = get("/api/config")[1]["values"]
+    status, answer = get("/api/config", "PUT", {"original": original, "values": {"mqtt_host": "elsewhere"}})
+    assert status == 400 and "config file" in answer["error"]
+    assert PvPiConfig.from_file(str(tmp_path / "config.json")).mqtt_host is None

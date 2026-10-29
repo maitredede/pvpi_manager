@@ -65,7 +65,6 @@ const GROUPS = [
   ["Clocks", { time_pi2mcu: "Set PV Pi time from Raspberry Pi at startup", time_mcu2pi: "Set Raspberry Pi time from PV Pi at startup" }],
   ["Connection and dashboard", { uart_port: "UART port", schedules_dir: "Schedule folder", full_dashboard: "Show history charts" }],
   ["BMS", { bms_address: "BMS Bluetooth address", bms_type: "BMS type (aiobmsble module)", telemetry_period: "Reading interval (seconds)" }],
-  ["MQTT (Home Assistant)", { mqtt_host: "Broker host", mqtt_port: "Broker port", mqtt_username: "User name", mqtt_password_file: "Password file", mqtt_topic: "Topic", mqtt_discovery_prefix: "Discovery prefix" }],
 ];
 let original, dirty = false, writable = false;
 const inputs = new Map();

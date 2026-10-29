@@ -50,7 +50,6 @@ Editing the file by hand? Run `uv run pvpi restart` afterwards (schedule changes
 | `mqtt_host` | `null` | MQTT broker to send the readings to; empty to send none |
 | `mqtt_port` | `1883` | The MQTT broker's port |
 | `mqtt_username` | `null` | MQTT user name; empty for none |
-| `mqtt_password_file` | `null` | File holding the MQTT password (kept out of this config); empty for none |
 | `mqtt_topic` | `"pvpi"` | First level of the MQTT topics the readings are sent to |
 | `mqtt_discovery_prefix` | `"homeassistant"` | Home Assistant's MQTT discovery prefix |
 <!-- /options -->

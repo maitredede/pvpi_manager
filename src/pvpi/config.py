@@ -96,9 +96,6 @@ class PvPiConfig(BaseSettings, extra="forbid"):
     mqtt_host: str | None = Field(None, description="MQTT broker to send the readings to; empty to send none")
     mqtt_port: int = Field(1883, description="The MQTT broker's port", ge=1, le=65535)
     mqtt_username: str | None = Field(None, description="MQTT user name; empty for none")
-    mqtt_password_file: Path | None = Field(
-        None, description="File holding the MQTT password (kept out of this config); empty for none"
-    )
     mqtt_topic: str = Field(
         "pvpi", pattern=r"^[A-Za-z0-9_-]+$", description="First level of the MQTT topics the readings are sent to"
     )
@@ -143,6 +140,12 @@ class PvPiConfig(BaseSettings, extra="forbid"):
         """The shortest off period: time for the Pi to shut down and the power to go off before
         the wake alarm."""
         return timedelta(seconds=self.power_off_delay + 60)
+
+    @property
+    def mqtt_password_path(self) -> Path:
+        """The MQTT password's file: next to this config, as the dashboard shows the config to anyone."""
+        folder = self._source.parent if self._source is not None else Path(user_config_dir("pvpi"))
+        return folder / "mqtt-password"
 
     def schedule_path(self, name: str) -> Path:
         return self.schedules_folder / f"{name}.json"

@@ -256,7 +256,11 @@ class MqttPublisher:
         self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"{config.mqtt_topic}_{host}")
         self._client.will_set(f"{self.base}/status", "offline", retain=True)
         if config.mqtt_username:
-            password = config.mqtt_password_file.read_text().strip() if config.mqtt_password_file else None
+            try:
+                password = config.mqtt_password_path.read_text().strip()
+            except FileNotFoundError:
+                _logger.warning("No MQTT password: %s isn't there", config.mqtt_password_path)
+                password = None
             self._client.username_pw_set(config.mqtt_username, password)
         self._client.on_connect = self._on_connect
         self._client.connect_async(config.mqtt_host, config.mqtt_port)

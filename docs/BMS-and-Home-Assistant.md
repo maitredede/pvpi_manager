@@ -44,19 +44,21 @@ On a Pi 3 or 4, Bluetooth needs the PL011 UART: keep the PV Pi on `/dev/ttyS0` (
 
 ## 3. Home Assistant (MQTT)
 
-You need an MQTT broker that Home Assistant uses, e.g. the Mosquitto broker app with the MQTT integration. Create a Home Assistant user for the Pi (or a broker login), and put its password in a file only you can read, kept out of `config.json` (the dashboard shows the config to anyone who can reach it):
+You need an MQTT broker that Home Assistant uses, e.g. the Mosquitto broker app with the MQTT integration. Create a Home Assistant user for the Pi (or a broker login), and put its password in `mqtt-password`, next to your `config.json` (`uv run pvpi config-path` shows where), readable by you only:
 
 ```shell
-install -m 600 /dev/null ~/.config/pvpi/mqtt-password
-nano ~/.config/pvpi/mqtt-password
+cd "$(dirname "$(uv run pvpi config-path)")"
+install -m 600 /dev/null mqtt-password
+nano mqtt-password
 ```
+
+The MQTT settings are set in `config.json` by hand: the dashboard, which anyone on your network can reach, can't change them, so it can't change where the password is sent.
 
 | Option | Default | What it's for |
 |---|---|---|
 | `mqtt_host` | `null` | The broker, e.g. `homeassistant.local` |
 | `mqtt_port` | `1883` | The broker's port |
 | `mqtt_username` | `null` | The broker user |
-| `mqtt_password_file` | `null` | The file holding its password |
 | `mqtt_topic` | `pvpi` | First level of the topics, and of the entity ids |
 | `mqtt_discovery_prefix` | `homeassistant` | Home Assistant's discovery prefix |
 

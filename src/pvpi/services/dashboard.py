@@ -424,6 +424,10 @@ class _Handler(BaseHTTPRequestHandler):
                 updates = body["values"]
                 if "schedule" in updates:
                     raise ValueError("Choose the active schedule on the Schedule page")
+                # Where the MQTT password is sent: changed in config.json only, not by anyone reaching this page.
+                saved = current.model_dump(mode="json")
+                if any(updates[k] != saved.get(k) for k in updates if k.startswith("mqtt_")):
+                    raise ValueError("The MQTT settings are changed in the config file, not here")
                 updated = PvPiConfig.model_validate({**current.model_dump(mode="json"), **updates})
                 if updated.time_pi2mcu and updated.time_mcu2pi:
                     raise ValueError("Choose just one startup clock direction")
