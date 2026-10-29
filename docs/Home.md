@@ -8,6 +8,7 @@ pvpi_manager is the Python software that talks to it: a command line tool, a few
 - [Services and dashboard](Services-and-dashboard.md): what runs in the background, and the web dashboard
 - [Scheduling](Scheduling.md): choose when your Pi is on
 - [Power log](Power-log.md): see when your Pi was on
+- [BMS and Home Assistant](BMS-and-Home-Assistant.md): read your battery's BMS, and send the readings to Home Assistant
 - [Configuration](Configuration.md): every setting in `config.json`
 - [Commands](Commands.md): the `pvpi` command line tool
 - [Python client](Python-client.md): use the PV Pi from your own code

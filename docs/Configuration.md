@@ -44,6 +44,15 @@ Editing the file by hand? Run `uv run pvpi restart` afterwards (schedule changes
 | `time_pi2mcu` | `false` | When the Pi starts, set the PV Pi's clock from the Pi's |
 | `time_mcu2pi` | `false` | When the Pi starts, set its clock from the PV Pi's (use this if your Pi isn't connected to a network) |
 | `full_dashboard` | `true` | Show the history charts on the dashboard, not just the live readings |
+| `bms_address` | `null` | Bluetooth address of the battery's BMS; empty to read none |
+| `bms_type` | `"daly_bms"` | The BMS's aiobmsble module, e.g. daly_bms or jbd_bms |
+| `telemetry_period` | `30` | Seconds between BMS readings and MQTT updates (10 to 3600) |
+| `mqtt_host` | `null` | MQTT broker to send the readings to; empty to send none |
+| `mqtt_port` | `1883` | The MQTT broker's port |
+| `mqtt_username` | `null` | MQTT user name; empty for none |
+| `mqtt_password_file` | `null` | File holding the MQTT password (kept out of this config); empty for none |
+| `mqtt_topic` | `"pvpi"` | First level of the MQTT topics the readings are sent to |
+| `mqtt_discovery_prefix` | `"homeassistant"` | Home Assistant's MQTT discovery prefix |
 <!-- /options -->
 
 To update this table after changing an option: `uv run python scripts/gen_config_docs.py`.
