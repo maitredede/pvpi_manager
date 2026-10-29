@@ -159,9 +159,10 @@ class PvPiClient:
         Estimate State of Charge (SoC %) of a 12V (4S) LiFePO4 battery
         from resting voltage using linear interpolation.
         """
+        return self.soc_for_voltage(self.get_battery_voltage())
 
-        voltage = self.get_battery_voltage()
-
+    def soc_for_voltage(self, voltage: float) -> float:
+        """The estimated SoC (%) for a battery voltage already read: see estimated_soc."""
         # Safety check
         if not self.voltage_soc_table:
             return 0.0
