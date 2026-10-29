@@ -8,6 +8,7 @@ from pvpi.config import PvPiConfig
 from pvpi.logging_ import RotatingCSVLogger
 from pvpi.power_log import PowerLog
 from pvpi.schedule import Schedule
+from pvpi.system_battery import SystemBattery
 from pvpi.transports import ZmqSerialProxyInterface
 from pvpi.utils import set_system_time
 
@@ -74,6 +75,62 @@ def _log_stats(client: PvPiClient, bat_v: float, stats_data_logger: RotatingCSVL
         stats_data_logger.log_stats(bat_v, bat_c, pv_v, pv_c, temperature)
 
 
+class _SystemBatteryFeed:
+    """Keeps the system battery up to date (docs/System-battery.md). Whatever goes wrong with it is
+    logged once and never stops the manager. After a failure it rests for a few passes, so a board
+    slow to answer the extra requests holds up the loop once a minute at most."""
+
+    REST_PASSES = 6
+
+    def __init__(self, battery: SystemBattery):
+        self.battery = battery
+        self.failing = False  # the last update failed (and was logged)
+        self.resting = 0  # passes left before trying again
+
+    def feed(self, client: PvPiClient, bat_v: float, low: bool) -> None:
+        if self.resting:
+            self.resting -= 1
+            return
+        try:
+            if low:  # no more requests to the board: the low battery checks mustn't wait on them
+                self.battery.low(bat_v, client.soc_for_voltage(bat_v))
+            else:
+                self.battery.update(
+                    bat_v,
+                    client.get_battery_current(),
+                    client.get_pv_voltage(),
+                    client.get_pv_current(),
+                    client.get_charge_state_code(),
+                    client.soc_for_voltage(bat_v),
+                )
+        except Exception as err:
+            if not self.failing:
+                _logger.warning("Couldn't update the system battery (logged once until it works): %s", err)
+            self.failing, self.resting = True, self.REST_PASSES
+            return
+        if self.failing:
+            _logger.info("System battery updated again")
+        self.failing = False
+
+    def close(self) -> None:
+        try:
+            self.battery.close()
+        except Exception as err:
+            _logger.warning("Couldn't close the system battery: %s", err)
+
+
+def _open_system_battery(config: PvPiConfig) -> _SystemBatteryFeed | None:
+    if not config.system_battery:
+        return None
+    try:
+        battery = SystemBattery()
+    except OSError as err:
+        _logger.warning("System battery off: %s (see docs/System-battery.md)", err)
+        return None
+    _logger.info("System battery: on")
+    return _SystemBatteryFeed(battery)
+
+
 def run(config: PvPiConfig):
     serial_interface = ZmqSerialProxyInterface()
     client = PvPiClient(interface=serial_interface)
@@ -109,6 +166,7 @@ def run(config: PvPiConfig):
 
     _logger.info("Log period: %i minutes", config.log_period)
     watch = _ScheduleWatch(config)
+    system_battery = _open_system_battery(config)
 
     # Setup power watchdog
     _logger.info("Watchdog: %s", "On" if config.enable_watchdog else "Off")
@@ -180,21 +238,27 @@ def run(config: PvPiConfig):
             if bat_v <= config.low_bat_volt:
                 low_readings += 1
                 _logger.info("Battery low: %s V (%i of %i)", bat_v, low_readings, config.low_bat_readings)
-                if low_readings >= config.low_bat_readings:
-                    _logger.info("Shutdown Voltage!")
-                    reason = "low battery"
-                    break
             else:
                 low_readings = 0
+            if system_battery:
+                system_battery.feed(client, bat_v, low=low_readings > 0)
+            if low_readings >= config.low_bat_readings:
+                _logger.info("Shutdown Voltage!")
+                reason = "low battery"
+                break
 
             time.sleep(LOOP_SECS)
     except Exception:
         # The watchdog is left as it is: with it on, the PV PI still restarts a Pi whose
         # manager stays down.
+        if system_battery:
+            system_battery.close()
         serial_interface.close()
         raise
     else:
         _logger.info("Closing down...")
+        if system_battery:
+            system_battery.close()
         if power_log:
             _attempt("log the shutdown", power_log.shutdown, reason)
         # A failed request is logged and the shutdown goes ahead: on a low battery the Pi

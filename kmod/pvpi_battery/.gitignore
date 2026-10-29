@@ -1,0 +1,9 @@
+# Build output of `make`
+*.o
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+.module-common.o
+Module.symvers
+modules.order

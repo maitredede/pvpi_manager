@@ -44,6 +44,7 @@ Editing the file by hand? Run `uv run pvpi restart` afterwards (schedule changes
 | `time_pi2mcu` | `false` | When the Pi starts, set the PV Pi's clock from the Pi's |
 | `time_mcu2pi` | `false` | When the Pi starts, set its clock from the PV Pi's (use this if your Pi isn't connected to a network) |
 | `full_dashboard` | `true` | Show the history charts on the dashboard, not just the live readings |
+| `system_battery` | `false` | Show the battery to the system like a laptop's (upower, battery indicators); needs the pvpi_battery kernel module |
 <!-- /options -->
 
 To update this table after changing an option: `uv run python scripts/gen_config_docs.py`.

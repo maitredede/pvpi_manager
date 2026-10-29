@@ -1,0 +1,17 @@
+# /etc/systemd/system/pvpi-battery-nut.service
+# Writes /run/pvpi-battery-nut/pvpi.dev for NUT's dummy-ups driver (see docs/System-battery.md).
+[Unit]
+Description=PV PI battery data for NUT (dummy-ups)
+After=systemd-modules-load.service
+Before=nut-driver.target
+
+[Service]
+ExecStart=/usr/local/bin/pvpi-battery-nut.sh /run/pvpi-battery-nut/pvpi.dev 10
+DynamicUser=yes
+RuntimeDirectory=pvpi-battery-nut
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

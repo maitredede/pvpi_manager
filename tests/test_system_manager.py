@@ -1,5 +1,6 @@
 """The manager's loop, with a fake board: when it shuts down, and what a bad reading does."""
 
+import logging
 import os
 from datetime import datetime, time, timedelta
 
@@ -8,6 +9,7 @@ import pytest
 from pvpi.config import PvPiConfig
 from pvpi.schedule import Schedule
 from pvpi.services import system_manager
+from pvpi.system_battery import SystemBattery
 
 DAY = {"kind": "daily", "on": "07:00", "off": "19:00"}
 
@@ -151,3 +153,56 @@ def test_the_power_log_has_the_boot_the_heartbeat_and_the_shutdown(run, monkeypa
         line.split(",")[1:3] for f in (tmp_path / "power").glob("*.csv") for line in f.read_text().splitlines()[1:]
     ]
     assert events[0] == ["boot", ""] and ["running", ""] in events and events[-1] == ["shutdown", "schedule"]
+
+
+def test_with_the_battery_module_missing_the_manager_runs_without_it(run, monkeypatch, tmp_path, caplog):
+    monkeypatch.setattr(system_manager, "SystemBattery", lambda: SystemBattery(root=tmp_path / "none"))
+    with caplog.at_level(logging.WARNING), pytest.raises(Shutdown):
+        run([12.5] * 3, low_bat_volt=12.9, system_battery=True)
+    assert "System battery off" in caplog.text
+    assert "get_charge_state_code" not in run.board.calls
+
+
+def test_the_system_battery_is_fed_every_pass_and_closed_on_the_way_down(run, monkeypatch, power_supply):
+    monkeypatch.setattr(system_manager, "SystemBattery", lambda: SystemBattery(root=power_supply))
+    battery = power_supply / "pvpi-battery"
+    levels = []
+    with pytest.raises(Shutdown):
+        run(
+            [13.1, 13.0, 12.5, 12.5, 12.5],
+            low_bat_volt=12.9,
+            system_battery=True,
+            on_sleep=lambda: levels.append((battery / "capacity_level").read_text().strip()),
+        )
+    assert levels == ["Normal", "Normal", "Critical", "Critical", "Critical"]  # the last: on the way down
+    # The low readings ask the board for nothing more than the voltage.
+    assert run.board.calls.count("get_charge_state_code") == 2
+    assert (battery / "present").read_text() == "0\n"
+
+
+def test_the_system_battery_is_closed_when_the_manager_fails(run, monkeypatch, power_supply):
+    monkeypatch.setattr(system_manager, "SystemBattery", lambda: SystemBattery(root=power_supply))
+    with pytest.raises(TimeoutError):
+        run([13.1] + [TimeoutError("late")] * system_manager.MAX_FAILED_PASSES, system_battery=True)
+    assert (power_supply / "pvpi-battery" / "present").read_text() == "0\n"
+
+
+def test_a_failing_system_battery_is_logged_once_and_never_stops_the_manager(run, monkeypatch, caplog):
+    updates = []
+
+    class Broken:
+        def update(self, *readings):
+            updates.append(readings)
+            raise PermissionError("not in the dialout group")
+
+        def close(self):
+            raise PermissionError("not in the dialout group")
+
+    monkeypatch.setattr(system_manager, "SystemBattery", Broken)
+    passes = system_manager.MAX_FAILED_PASSES + 10  # more failures than the board is allowed
+    with caplog.at_level(logging.WARNING), pytest.raises(Shutdown, match="shutdown now"):
+        run([13.1] * passes + [12.5] * 3, low_bat_volt=12.9, system_battery=True)
+    assert run.board.voltages == []  # every pass ran, on to the low battery shutdown
+    assert caplog.text.count("Couldn't update the system battery") == 1
+    # After a failure it rests, rather than wait on the board every pass.
+    assert len(updates) == -(-passes // (system_manager._SystemBatteryFeed.REST_PASSES + 1))
