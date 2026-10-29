@@ -82,6 +82,13 @@ class PvPiConfig(BaseSettings, extra="forbid"):
         True, description="Show the history charts on the dashboard, not just the live readings"
     )
 
+    # System battery: needs the pvpi_battery kernel module (docs/System-battery.md)
+    system_battery: bool = Field(
+        False,
+        description="Show the battery to the system like a laptop's (upower, battery indicators); "
+        "needs the pvpi_battery kernel module",
+    )
+
     _source: Path | None = PrivateAttr(None)  # the file it was read from
 
     @model_validator(mode="before")

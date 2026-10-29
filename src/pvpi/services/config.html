@@ -64,6 +64,7 @@ const GROUPS = [
   ["Watchdog", { enable_watchdog: "Enable watchdog", watchdog_period_mins: "Watchdog timeout (minutes)" }],
   ["Clocks", { time_pi2mcu: "Set PV Pi time from Raspberry Pi at startup", time_mcu2pi: "Set Raspberry Pi time from PV Pi at startup" }],
   ["Connection and dashboard", { uart_port: "UART port", schedules_dir: "Schedule folder", full_dashboard: "Show history charts" }],
+  ["System battery", { system_battery: "Show the battery to the system" }],
 ];
 let original, dirty = false, writable = false;
 const inputs = new Map();
