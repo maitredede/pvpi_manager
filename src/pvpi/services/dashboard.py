@@ -26,6 +26,8 @@ from pvpi.client import PvPiClient
 from pvpi.config import SCHEDULE_NAME, PvPiConfig
 from pvpi.power_log import boot_time, read_power
 from pvpi.schedule import Schedule
+from pvpi.services.telemetry import BMS_FILE
+from pvpi.systemd import _SYSTEMD_DIR, SERVICES
 from pvpi.transports import ZmqSerialProxyInterface
 
 _logger = logging.getLogger(__name__)
@@ -268,6 +270,8 @@ class _Handler(BaseHTTPRequestHandler):
             history = read_history(Path(config.data_log_path), start, end)
             history["power"] = _power(config, history["start"], history["end"])
             self._json(200, history)
+        elif url.path == "/api/bms":
+            self._bms()
         elif url.path == "/api/schedules":
             self._json(200, self._schedules())
         elif name := self._schedule_name(url.path):
@@ -380,6 +384,18 @@ class _Handler(BaseHTTPRequestHandler):
             return PvPiConfig.from_file(str(config._source))
         return config
 
+    def _bms(self) -> None:
+        """The latest BMS readings the telemetry service saved; 404 when no BMS is set up."""
+        if self.server.config.bms_address is None:
+            self._json(404, {"error": "No BMS: set bms_address in the config"})
+            return
+        try:
+            readings = json.loads((Path(self.server.config.data_log_path) / BMS_FILE).read_text())
+        except (OSError, ValueError):
+            self._json(503, {"error": "No BMS readings yet: is the pvpi_telemetry service running?"})
+            return
+        self._json(200, readings)
+
     def _config_view(self) -> dict:
         config = self._disk_config()
         return {
@@ -425,7 +441,9 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 config = self._disk_config()
                 config.load_schedule()
-                command = ["systemctl", "restart", "pvpi_uart.service", "pvpi_manager.service"]
+                # The telemetry service only when installed: one set up before it existed has none.
+                services = [s for s in SERVICES if s != "pvpi_dashboard.service" and (_SYSTEMD_DIR / s).exists()]
+                command = ["systemctl", "restart", *(services or ["pvpi_uart.service", "pvpi_manager.service"])]
                 if os.geteuid() != 0:
                     command = ["sudo", "-n", *command]
                 with self.server._lock:

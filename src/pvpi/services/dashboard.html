@@ -38,6 +38,21 @@ try { const theme = localStorage.getItem("pvpi-theme"); if (theme) document.docu
   <p class="muted">* Estimated charge is based off of the battery voltage reading and compared against a standard
     voltage-capacity curve for a 12V LiFePO4 battery at rest.</p>
 
+  <section id="bms" hidden>
+    <h2>Battery BMS</h2>
+    <div class="tiles">
+      <div class="tile"><div class="label">Charge</div><div class="value" id="bms_soc">–</div></div>
+      <div class="tile"><div class="label">Voltage</div><div class="value" id="bms_v">–</div></div>
+      <div class="tile"><div class="label">Current (+ charging)</div><div class="value" id="bms_c">–</div></div>
+      <div class="tile"><div class="label">Power</div><div class="value" id="bms_p">–</div></div>
+      <div class="tile"><div class="label">Temperature</div><div class="value" id="bms_temp">–</div></div>
+      <div class="tile"><div class="label">Cells (min – max)</div><div class="value" id="bms_cells">–</div></div>
+      <div class="tile"><div class="label">Stored energy</div><div class="value" id="bms_stored">–</div></div>
+      <div class="tile"><div class="label">Cycles</div><div class="value" id="bms_cycles">–</div></div>
+    </div>
+    <p class="muted" id="bms-note"></p>
+  </section>
+
   <section id="history" hidden>
     <h2>History</h2>
     <div class="range">
@@ -94,6 +109,31 @@ async function refreshLive() {
     $("updated").className = "bad";
     if (!historyOn) { historyOn = true; $("history").hidden = false; refreshHistory(); }
   }
+}
+
+// ---- BMS (from the telemetry service) ----
+async function refreshBms() {
+  let b;
+  try {
+    b = await getJSON("/api/bms");
+  } catch (err) {
+    if (err.message.includes("No BMS:")) { $("bms").hidden = true; return; }
+    $("bms").hidden = false;
+    $("bms-note").textContent = err.message;
+    $("bms-note").className = "bad";
+    return;
+  }
+  $("bms").hidden = false;
+  $("bms_soc").textContent = fmt(b.bms_soc, 0) + " %";
+  $("bms_v").textContent = fmt(b.bms_v, 2) + " V";
+  $("bms_c").textContent = fmt(b.bms_c, 2) + " A";
+  $("bms_p").textContent = fmt(b.bms_p, 0) + " W";
+  $("bms_temp").textContent = fmt(b.bms_temp, 0) + " °C";
+  $("bms_cells").textContent = fmt(b.bms_cell_min, 3) + " – " + fmt(b.bms_cell_max, 3) + " V";
+  $("bms_stored").textContent = fmt(b.bms_stored, 0) + " Wh";
+  $("bms_cycles").textContent = fmt(b.bms_cycles, 0);
+  $("bms-note").textContent = "Read " + new Date(b.time).toLocaleTimeString();
+  $("bms-note").className = "muted";
 }
 
 // ---- History ----
@@ -315,7 +355,8 @@ window.addEventListener("resize", () => {
 $("start").addEventListener("change", refreshHistory);
 $("end").addEventListener("change", refreshHistory);
 refreshLive();
-setInterval(() => { refreshLive(); if (historyOn && !$("history").hidden) refreshHistory(); }, REFRESH_MS);
+refreshBms();
+setInterval(() => { refreshLive(); refreshBms(); if (historyOn && !$("history").hidden) refreshHistory(); }, REFRESH_MS);
 </script>
 </body>
 </html>
