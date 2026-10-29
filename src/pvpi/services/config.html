@@ -66,11 +66,13 @@ const GROUPS = [
   ["Connection and dashboard", { uart_port: "UART port", schedules_dir: "Schedule folder", full_dashboard: "Show history charts" }],
   ["BMS", { bms_address: "BMS Bluetooth address", bms_type: "BMS type (aiobmsble module)", telemetry_period: "Reading interval (seconds)" }],
 ];
-let original, dirty = false, writable = false;
+let original, fields, dirty = false, writable = false;
+// A setting that may be empty (null), e.g. the schedule folder or the BMS address
+const nullable = schema => (schema.anyOf || []).some(s => s.type === "null");
 const inputs = new Map();
 function status(text, bad = false) { $("status").textContent = text; $("status").className = bad ? "bad" : "muted"; }
 function render(data) {
-  original = data.values; dirty = false; writable = !!data.path;
+  original = data.values; fields = data.fields; dirty = false; writable = !!data.path;
   inputs.clear(); $("groups").replaceChildren();
   $("path").textContent = data.path ? "Config file: " + data.path : "No config file selected. Start the dashboard with --config to save settings.";
   GROUPS.forEach(([title, fields]) => {
@@ -88,7 +90,7 @@ function render(data) {
         if (schema.minimum !== undefined) input.min = schema.minimum;
         if (schema.exclusiveMinimum !== undefined && schema.type === "integer") input.min = schema.exclusiveMinimum + 1;
         if (schema.maximum !== undefined) input.max = schema.maximum;
-      } else if (input.type === "text") input.required = key !== "schedules_dir";
+      } else if (input.type === "text") input.required = !nullable(schema);
       input.disabled = !writable;
       help.id = input.id + "-help"; input.setAttribute("aria-describedby", help.id);
       help.className = "muted"; help.textContent = schema.description;
@@ -107,7 +109,7 @@ $("reload").onclick = () => { if (!dirty || confirm("Discard the changes not sav
 $("config-form").onsubmit = async event => {
   event.preventDefault();
   const values = {};
-  inputs.forEach((input, key) => { values[key] = input.type === "checkbox" ? input.checked : input.type === "number" ? Number(input.value) : key === "schedules_dir" && !input.value.trim() ? null : input.value; });
+  inputs.forEach((input, key) => { values[key] = input.type === "checkbox" ? input.checked : input.type === "number" ? Number(input.value) : nullable(fields[key]) && !input.value.trim() ? null : input.value; });
   if (values.time_pi2mcu && values.time_mcu2pi) { status("Choose just one startup clock direction.", true); return; }
   $("save").disabled = true; $("reload").disabled = true; $("restart").disabled = true;
   // Keep edits steady until the save response arrives.

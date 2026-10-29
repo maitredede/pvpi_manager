@@ -35,7 +35,8 @@ schedule on the **Schedule** tab. The buttons above the settings let you **Save*
 and **Restart** the PV Pi services to apply all settings. Save or reload unsaved edits before
 restarting. Restart reloads the dashboard settings and restarts the UART proxy and manager.
 The dashboard user needs permission to run `sudo -n systemctl restart pvpi_uart.service pvpi_manager.service`
-(or run the dashboard as root). Restart failures are shown on the page.
+(or run the dashboard as root). Restart failures are shown on the page. With the [telemetry service](BMS-and-Home-Assistant.md),
+also allow `sudo -n systemctl restart pvpi_telemetry.service`: it's restarted on its own, and a failure there is only logged.
 
 ![The dashboard's Config page](images/dashboard_config.png)
 

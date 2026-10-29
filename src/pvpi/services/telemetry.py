@@ -16,7 +16,10 @@ import json
 import logging
 import os
 import re
+import signal
 import socket
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -27,7 +30,9 @@ from pvpi.transports import ZmqSerialProxyInterface
 _logger = logging.getLogger(__name__)
 
 BMS_FILE = "bms.json"  # the latest BMS readings, in data_log_path, for the dashboard
-BMS_SCAN_SECS = 20.0  # how long to look for the BMS before trying again next period
+BMS_SCAN_SECS = 10.0  # how long to look for the BMS before giving up this time
+BMS_TIMEOUT_SECS = 60.0  # the most a whole BMS reading (scan, connection, requests) may take
+BMS_MAX_WAIT_SECS = 600  # the longest wait before trying a failing BMS again
 THERMAL_ROOT = Path("/sys/class/thermal")
 
 _CHARGING = {
@@ -158,12 +163,16 @@ def save_bms(folder: Path, readings: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / BMS_FILE
     tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps({"time": datetime.now().isoformat(timespec="seconds"), **readings}))
+    tmp.write_text(json.dumps({"time": datetime.now().astimezone().isoformat(timespec="seconds"), **readings}))
     os.replace(tmp, path)
 
 
-def discovery(config: PvPiConfig, host: str, readings: dict, bms: bool) -> tuple[str, dict]:
-    """Home Assistant's device discovery topic and payload for the PV Pi's or the BMS's readings."""
+def discovery(config: PvPiConfig, host: str, keys, bms: bool) -> tuple[str, dict]:
+    """Home Assistant's device discovery topic and payload for the PV Pi's or the BMS's readings.
+
+    `keys` are all the readings seen so far, not just the latest: an entity stays when a reading is
+    missing for a while (e.g. the BMS's runtime, only known while discharging), showing unknown.
+    """
     node = f"{config.mqtt_topic}_{host}" + ("_bms" if bms else "")
     base = f"{config.mqtt_topic}/{host}"
     device = {"ids": [node], "name": "Battery BMS" if bms else f"PV Pi ({host})"}
@@ -173,16 +182,20 @@ def discovery(config: PvPiConfig, host: str, readings: dict, bms: bool) -> tuple
         device |= {"mf": "AutoEcology", "mdl": "PV Pi"}
     availability = [{"t": f"{base}/status"}] + ([{"t": f"{base}/bms/status"}] if bms else [])
     components = {}
-    for key in readings:
+    for key in sorted(keys):
         if (entity := _entity(key)) is None:
             continue
         platform, name, device_class, unit, extra = entity
         component = {"p": platform, "name": name, "unique_id": f"{node}_{key}"}
         component["default_entity_id"] = f"{platform}.{config.mqtt_topic}_{key}"
+        # "None" (a missing reading) shows as unknown in Home Assistant
         if platform == "binary_sensor":
-            component["value_template"] = f"{{{{ 'ON' if value_json.{key} else 'OFF' }}}}"
+            value = f"('ON' if value_json.{key} else 'OFF') if value_json.{key} is defined else None"
         else:
-            component["value_template"] = f"{{{{ value_json.{key} }}}}"
+            value = f"value_json.{key} | default(None)"
+        component["value_template"] = f"{{{{ {value} }}}}"
+        # Readings not sent for three periods (the board or BMS can't be read) show as unavailable.
+        component["expire_after"] = 3 * config.telemetry_period
         if device_class:
             component["device_class"] = device_class
         if unit:
@@ -201,11 +214,16 @@ def discovery(config: PvPiConfig, host: str, readings: dict, bms: bool) -> tuple
 
 
 class BmsReader:
-    """Reads a BMS over Bluetooth with aiobmsble, keeping the connection between readings."""
+    """Reads a BMS over Bluetooth with aiobmsble, keeping the connection between readings.
 
-    def __init__(self, address: str, bms_type: str):
+    After a failure it waits longer each time before trying again (up to BMS_MAX_WAIT_SECS), as
+    scanning for a BMS that isn't there takes the radio from the Wi-Fi on boards that share one.
+    """
+
+    def __init__(self, address: str, bms_type: str, period: int):
         try:
             from bleak import BleakScanner
+            from bleak_retry_connector import close_stale_connections_by_address
 
             self._bms_class = importlib.import_module(f"aiobmsble.bms.{bms_type}").BMS
         except ImportError as err:
@@ -213,59 +231,80 @@ class BmsReader:
                 f"Can't read a '{bms_type}' BMS ({err}): install the extra with 'uv sync --extra bms' (Python 3.12+)"
             ) from err
         self._scanner = BleakScanner
-        self.address = address
+        self._close_stale = close_stale_connections_by_address
+        self.address, self.period = address, period
         self._bms = None
-        self._failing = False
+        self._failures = 0
+        self._next_try = 0.0  # time.monotonic() of the next attempt
 
     async def read(self) -> dict | None:
-        """The BMS's readings, or None (logged) when it can't be read: tried again next time."""
+        """The BMS's readings, or None (logged) when it can't be read now."""
+        if time.monotonic() < self._next_try:
+            return None
         try:
-            if self._bms is None:
-                device = await self._scanner.find_device_by_address(self.address, timeout=BMS_SCAN_SECS)
-                if device is None:
-                    raise ConnectionError(f"{self.address} not found (out of range, or another client connected?)")
-                self._bms = self._bms_class(device)
-            readings = bms_readings(await self._bms.async_update())
+            readings = await asyncio.wait_for(self._read(), timeout=BMS_TIMEOUT_SECS)
         except Exception as err:
-            if not self._failing:
-                _logger.warning("Couldn't read the BMS: %s", err)
-            self._failing = True
+            if not self._failures:
+                _logger.warning("Couldn't read the BMS: %s", err or type(err).__name__)
+            self._failures += 1
+            wait = min(self.period * 2 ** (self._failures - 1), BMS_MAX_WAIT_SECS)
+            self._next_try = time.monotonic() + wait
             await self.close()
             return None
-        if self._failing:
+        if self._failures:
             _logger.info("BMS read again")
-        self._failing = False
+        self._failures = 0
         return readings
+
+    async def _read(self) -> dict:
+        if self._bms is None:
+            # A connection BlueZ kept from before (e.g. this service killed) hides the BMS from scans.
+            await self._close_stale(self.address)
+            device = await self._scanner.find_device_by_address(self.address, timeout=BMS_SCAN_SECS)
+            if device is None:
+                raise ConnectionError(f"{self.address} not found (out of range, or another client connected?)")
+            self._bms = self._bms_class(device)
+        return bms_readings(await self._bms.async_update())
 
     async def close(self) -> None:
         if self._bms is not None:
             with contextlib.suppress(Exception):
-                await self._bms.disconnect(reset=True)
+                await asyncio.wait_for(self._bms.disconnect(reset=True), timeout=10)
         self._bms = None
 
 
 class MqttPublisher:
-    """Sends the readings to an MQTT broker, with Home Assistant discovery."""
+    """Sends the readings to an MQTT broker, with Home Assistant discovery.
+
+    Every message is retained, and all of them are sent again on each connection: the first ones
+    may come before the connection is up, and a broker may have restarted without keeping them.
+    """
 
     def __init__(self, config: PvPiConfig, host: str):
-        import paho.mqtt.client as mqtt
+        try:
+            import paho.mqtt.client as mqtt
+        except ImportError as err:
+            raise RuntimeError(f"Can't send to MQTT ({err}): run 'uv sync'") from err
 
         self.config, self.host = config, host
         self.base = f"{config.mqtt_topic}/{host}"
-        self._discovered: dict[str, str] = {}  # topic -> payload sent, sent again on reconnect
+        self._lock = threading.Lock()  # paho calls _on_connect from its own thread
+        self._retained: dict[str, str] = {}  # topic -> latest payload
+        self._keys: dict[bool, set[str]] = {False: set(), True: set()}  # readings seen, by device (bms)
         self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"{config.mqtt_topic}_{host}")
         self._client.will_set(f"{self.base}/status", "offline", retain=True)
         if config.mqtt_username:
             try:
                 password = config.mqtt_password_path.read_text().strip()
-            except FileNotFoundError:
-                _logger.warning("No MQTT password: %s isn't there", config.mqtt_password_path)
+            except OSError as err:
+                _logger.warning("No MQTT password (%s)", err)
                 password = None
             self._client.username_pw_set(config.mqtt_username, password)
         self._client.on_connect = self._on_connect
         self._client.on_connect_fail = self._on_connect_fail
         self._client.on_disconnect = self._on_disconnect
         self._connected = None  # None until the first try: then each change is logged once
+        self._send(f"{self.base}/status", "online")
         _logger.info("Sending the readings to MQTT %s:%i", config.mqtt_host, config.mqtt_port)
         self._client.connect_async(config.mqtt_host, config.mqtt_port)
         self._client.loop_start()
@@ -287,32 +326,47 @@ class MqttPublisher:
             return
         _logger.info("Connected to the MQTT broker %s:%i", self.config.mqtt_host, self.config.mqtt_port)
         self._connected = True
-        client.publish(f"{self.base}/status", "online", retain=True)
-        for topic, payload in self._discovered.items():
+        with self._lock:
+            messages = list(self._retained.items())
+        for topic, payload in messages:
             client.publish(topic, payload, retain=True)
+
+    def _send(self, topic: str, payload: str) -> None:
+        with self._lock:
+            if self._retained.get(topic) == payload and topic.startswith(self.config.mqtt_discovery_prefix):
+                return  # discovery: only when it changes
+            self._retained[topic] = payload
+        self._client.publish(topic, payload, retain=True)  # dropped while not connected: sent on connect
 
     def publish(self, readings: dict | None, bms: dict | None, bms_on: bool) -> None:
         """Send the latest readings: None for a part that couldn't be read this time."""
         if readings is not None:
-            self._send(readings, bms=False)
+            self._state(readings, bms=False)
         if bms_on:
-            self._client.publish(f"{self.base}/bms/status", "online" if bms is not None else "offline", retain=True)
+            self._send(f"{self.base}/bms/status", "online" if bms is not None else "offline")
             if bms is not None:
-                self._send(bms, bms=True)
+                self._state(bms, bms=True)
 
-    def _send(self, readings: dict, bms: bool) -> None:
-        topic, payload = discovery(self.config, self.host, readings, bms)
-        text = json.dumps(payload)
-        if self._discovered.get(topic) != text:  # e.g. the BMS's cells, once they're known
-            self._discovered[topic] = text
-            self._client.publish(topic, text, retain=True)
-        state_topic = f"{self.base}/bms/state" if bms else f"{self.base}/state"
-        self._client.publish(state_topic, json.dumps(readings), retain=True)
+    def _state(self, readings: dict, bms: bool) -> None:
+        self._keys[bms] |= readings.keys()
+        topic, payload = discovery(self.config, self.host, self._keys[bms], bms)
+        self._send(topic, json.dumps(payload))
+        self._send(f"{self.base}/bms/state" if bms else f"{self.base}/state", json.dumps(readings))
 
-    def close(self) -> None:
-        self._client.publish(f"{self.base}/status", "offline", retain=True).wait_for_publish(timeout=5)
-        self._client.loop_stop()
-        self._client.disconnect()
+    def close(self, bms_on: bool) -> None:
+        """Mark this service (and the BMS) offline, then disconnect."""
+        try:
+            sent = [self._client.publish(f"{self.base}/status", "offline", retain=True)]
+            if bms_on:
+                sent.append(self._client.publish(f"{self.base}/bms/status", "offline", retain=True))
+            if self._client.is_connected():
+                for message in sent:
+                    message.wait_for_publish(timeout=5)
+        except Exception as err:
+            _logger.warning("Couldn't mark the readings offline: %s", err)
+        finally:
+            self._client.disconnect()
+            self._client.loop_stop()
 
 
 def _host() -> str:
@@ -326,34 +380,55 @@ async def run_async(config: PvPiConfig) -> None:
     host = _host()
     if config.bms_address:
         _logger.info("Reading the %s BMS %s every %is", config.bms_type, config.bms_address, config.telemetry_period)
-    bms = BmsReader(config.bms_address, config.bms_type) if config.bms_address else None
+    bms = BmsReader(config.bms_address, config.bms_type, config.telemetry_period) if config.bms_address else None
     publisher = MqttPublisher(config, host) if config.mqtt_host else None
     client: PvPiClient | None = None
+    failing = set()  # what's failing now: each is logged when it starts, not every period
     try:
         while True:
+            started = time.monotonic()
             bms_values = await bms.read() if bms else None
             if bms_values is not None:
-                save_bms(config.data_log_path, bms_values)
+                try:
+                    save_bms(config.data_log_path, bms_values)
+                    failing.discard("bms.json")
+                except OSError as err:
+                    if "bms.json" not in failing:
+                        _logger.warning("Couldn't save the BMS readings for the dashboard: %s", err)
+                    failing.add("bms.json")
             if publisher:
                 readings = None
                 try:
                     if client is None:
                         client = PvPiClient(interface=ZmqSerialProxyInterface())
                     readings = pvpi_readings(client) | pi_temperatures()
+                    if "board" in failing:
+                        _logger.info("PV PI read again")
+                    failing.discard("board")
                 except Exception as err:
-                    _logger.warning("Couldn't read the PV PI: %s", err)
+                    if "board" not in failing:
+                        _logger.warning("Couldn't read the PV PI: %s", err)
+                    failing.add("board")
                     if client is not None:
                         with contextlib.suppress(Exception):
                             client._interface.close()
                     client = None  # a fresh connection next time
                 publisher.publish(readings, bms_values, bms is not None)
-            await asyncio.sleep(config.telemetry_period)
+            await asyncio.sleep(max(1.0, config.telemetry_period - (time.monotonic() - started)))
     finally:
         if bms:
             await bms.close()
         if publisher:
-            publisher.close()
+            publisher.close(bms is not None)
+
+
+async def _until_stopped(config: PvPiConfig) -> None:
+    # systemd stops the service with SIGTERM: cancel, so the BMS is disconnected and MQTT told.
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, asyncio.current_task().cancel)
+    await run_async(config)
 
 
 def run(config: PvPiConfig) -> None:
-    asyncio.run(run_async(config))
+    """Run until stopped. Raises RuntimeError when an optional package it needs isn't installed."""
+    with contextlib.suppress(asyncio.CancelledError, KeyboardInterrupt):
+        asyncio.run(_until_stopped(config))

@@ -15,12 +15,12 @@ dependencies = [
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
     "pyserial>=3.5",
+    "paho-mqtt>=2.1.0",
     "pyzmq>=26",
 ]
 
 [project.optional-dependencies]
 bms = ["aiobmsble>=0.32.0; python_version >= '3.12'"]  # a battery BMS read over Bluetooth (pvpi telemetry)
-mqtt = ["paho-mqtt>=2.1.0"]  # the readings sent to Home Assistant (pvpi telemetry)
 
 [dependency-groups]
 dev = [

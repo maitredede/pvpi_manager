@@ -115,6 +115,7 @@ def _render_service(name: str, user: str, exec_start: str) -> str:
             f"ExecStart={exec_start}\n"
             "Restart=on-failure\n"
             "RestartSec=30\n"
+            "RestartPreventExitStatus=3\n"  # a package it needs is missing: starting again won't help
             "Environment=PYTHONUNBUFFERED=1\n"
             "\n"
             "[Install]\n"
@@ -189,7 +190,11 @@ def install_systemd(config_path: Path | None = None, dashboard: bool | None = No
     pvpi = _venv_pvpi()
     _logger.info("The services run %s", pvpi)
     if project_dir:
-        _logger.info("From the cloned repo at %s: after a git pull, run 'uv sync' then 'pvpi restart'", project_dir)
+        _logger.info(
+            "From the cloned repo at %s: after a git pull, run 'uv sync' (with '--extra bms' for a BMS) "
+            "then 'pvpi restart'",
+            project_dir,
+        )
 
     def make_exec_start(subcmd: str) -> str:
         return f"{pvpi} {subcmd}{config_flag}"
@@ -243,6 +248,10 @@ def _remove_service(name: str) -> None:
     subprocess.run(["systemctl", "disable", "--now", name], check=False)
     unit.unlink()
     _logger.info("%s uninstalled", name)
+
+
+def is_installed(name: str) -> bool:
+    return (_SYSTEMD_DIR / name).exists()
 
 
 def _enabled(name: str) -> bool:

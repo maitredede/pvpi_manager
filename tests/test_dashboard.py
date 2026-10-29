@@ -276,7 +276,7 @@ def test_clock_sync_uses_the_raspberry_pi_clock(dashboard):
 def test_restart_services_applies_saved_settings_and_reports_failure(dashboard, tmp_path, monkeypatch):
     import subprocess
 
-    monkeypatch.setattr("pvpi.services.dashboard._SYSTEMD_DIR", tmp_path / "systemd")  # no units installed
+    monkeypatch.setattr("pvpi.systemd._SYSTEMD_DIR", tmp_path / "systemd")  # no units installed
     get = dashboard()
     config_path = tmp_path / "config.json"
     saved = PvPiConfig.from_file(str(config_path))
@@ -302,33 +302,40 @@ def test_restart_services_applies_saved_settings_and_reports_failure(dashboard, 
     assert get("/")[0] == 200
 
 
-def test_restart_services_includes_installed_telemetry(dashboard, tmp_path, monkeypatch):
+def test_restart_services_restarts_telemetry_on_its_own(dashboard, tmp_path, monkeypatch):
+    import subprocess
+
     units = tmp_path / "systemd"
     units.mkdir()
-    for name in ("pvpi_uart.service", "pvpi_manager.service", "pvpi_telemetry.service", "pvpi_dashboard.service"):
-        (units / name).write_text("")
-    monkeypatch.setattr("pvpi.services.dashboard._SYSTEMD_DIR", units)
+    (units / "pvpi_telemetry.service").write_text("")
+    monkeypatch.setattr("pvpi.systemd._SYSTEMD_DIR", units)
     calls = []
-    monkeypatch.setattr("pvpi.services.dashboard.subprocess.run", lambda command, **kwargs: calls.append(command))
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 1 if "pvpi_telemetry.service" in command else 0, "", "denied")
+
+    monkeypatch.setattr("pvpi.services.dashboard.subprocess.run", run)
     get = dashboard()
-    assert get("/api/services/restart", "POST", {})[0] == 200
-    assert calls[0][-5:] == [
-        "systemctl",
-        "restart",
-        "pvpi_uart.service",
-        "pvpi_manager.service",
-        "pvpi_telemetry.service",
-    ]
+    assert get("/api/services/restart", "POST", {})[0] == 200  # the telemetry service failing is only logged
+    assert calls[0][-4:] == ["systemctl", "restart", "pvpi_uart.service", "pvpi_manager.service"]  # as in sudoers
+    assert calls[1][-3:] == ["systemctl", "restart", "pvpi_telemetry.service"]
 
 
 def test_bms_readings(dashboard, tmp_path):
-    assert dashboard()("/api/bms")[0] == 404  # no BMS set up
+    from datetime import datetime, timedelta
+
+    status, answer = dashboard()("/api/bms")
+    assert status == 404 and answer["configured"] is False  # no BMS set up
     get = dashboard(bms_address="D0:18:04:01:3F:7D")
     status, answer = get("/api/bms")
     assert status == 503 and "pvpi_telemetry" in answer["error"]
     (tmp_path / "logs").mkdir(exist_ok=True)
-    (tmp_path / "logs" / "bms.json").write_text('{"time": "2026-10-29T20:00:00", "bms_soc": 87}')
-    assert get("/api/bms") == (200, {"time": "2026-10-29T20:00:00", "bms_soc": 87})
+    for ago, stale in ((timedelta(seconds=20), False), (timedelta(hours=2), True)):
+        read = (datetime.now().astimezone() - ago).isoformat(timespec="seconds")
+        (tmp_path / "logs" / "bms.json").write_text(json.dumps({"time": read, "bms_soc": 87}))
+        status, answer = get("/api/bms")
+        assert status == 200 and answer["bms_soc"] == 87 and answer["stale"] is stale
 
 
 def test_mqtt_settings_are_not_changed_from_the_dashboard(dashboard, tmp_path):

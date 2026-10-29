@@ -117,7 +117,7 @@ async function refreshBms() {
   try {
     b = await getJSON("/api/bms");
   } catch (err) {
-    if (err.message.includes("No BMS:")) { $("bms").hidden = true; return; }
+    if (err.answer && err.answer.configured === false) { $("bms").hidden = true; return; }
     $("bms").hidden = false;
     $("bms-note").textContent = err.message;
     $("bms-note").className = "bad";
@@ -132,8 +132,9 @@ async function refreshBms() {
   $("bms_cells").textContent = fmt(b.bms_cell_min, 3) + " – " + fmt(b.bms_cell_max, 3) + " V";
   $("bms_stored").textContent = fmt(b.bms_stored, 0) + " Wh";
   $("bms_cycles").textContent = fmt(b.bms_cycles, 0);
-  $("bms-note").textContent = "Read " + new Date(b.time).toLocaleTimeString();
-  $("bms-note").className = "muted";
+  const read = new Date(b.time);
+  $("bms-note").textContent = (b.stale ? "Not read since " : "Read ") + read.toLocaleString();
+  $("bms-note").className = b.stale ? "bad" : "muted";
 }
 
 // ---- History ----

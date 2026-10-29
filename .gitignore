@@ -1,6 +1,7 @@
 # PVPI Project-specific
 logs/
 config.json
+mqtt-password
 
 
 # Byte-compiled / optimized / DLL files

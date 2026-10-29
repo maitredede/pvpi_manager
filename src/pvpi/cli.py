@@ -16,6 +16,7 @@ from pvpi.systemd import install_systemd, restart_systemd, run_dashboard, uninst
 from pvpi.transports import SerialInterface
 
 logger = logging.getLogger("pvpi")
+TELEMETRY_SETUP_ERROR = 3  # exit status: the telemetry service can't run as set up; systemd leaves it stopped
 
 
 @click.group()
@@ -192,9 +193,13 @@ def manager(config: str | None = None):
 @cli.command(short_help="Read the battery's BMS and send the readings to MQTT (see bms_address, mqtt_host)")
 @click.option("--config", type=click.Path(file_okay=True, dir_okay=False))
 def telemetry(config: str | None = None):
-    from pvpi.services import telemetry as telemetry_service  # its Bluetooth and MQTT packages are optional
+    from pvpi.services import telemetry as telemetry_service
 
-    telemetry_service.run(PvPiConfig.from_file(path=config))
+    try:
+        telemetry_service.run(PvPiConfig.from_file(path=config))
+    except RuntimeError as err:  # an optional package it needs isn't installed
+        logger.error("%s", err)
+        raise SystemExit(TELEMETRY_SETUP_ERROR) from err
 
 
 @cli.command(short_help="Launch the web dashboard")

@@ -5,7 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from platformdirs import user_config_dir, user_data_dir
-from pydantic import Field, PrivateAttr, model_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
 )
@@ -114,6 +114,11 @@ class PvPiConfig(BaseSettings, extra="forbid"):
                 "in schedules_dir and set schedule to its name (see the README's Scheduling section)"
             )
         return data
+
+    @field_validator("bms_address", "mqtt_host", "mqtt_username", mode="before")
+    @classmethod
+    def _empty_is_none(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
 
     @model_validator(mode="after")
     def _wakes_above_shutdown(self):

@@ -27,7 +27,7 @@ from pvpi.config import SCHEDULE_NAME, PvPiConfig
 from pvpi.power_log import boot_time, read_power
 from pvpi.schedule import Schedule
 from pvpi.services.telemetry import BMS_FILE
-from pvpi.systemd import _SYSTEMD_DIR, SERVICES
+from pvpi.systemd import is_installed
 from pvpi.transports import ZmqSerialProxyInterface
 
 _logger = logging.getLogger(__name__)
@@ -232,6 +232,17 @@ _FILES = {
 }
 
 
+def _restart_telemetry() -> None:
+    """Restart the optional telemetry service on its own, so the hardware services' restart command
+    (allowed in sudoers) stays as it was; a failure here is only logged."""
+    command = ["systemctl", "restart", "pvpi_telemetry.service"]
+    if os.geteuid() != 0:
+        command = ["sudo", "-n", *command]
+    done = subprocess.run(command, check=False, capture_output=True, text=True, timeout=30)
+    if done.returncode != 0:
+        _logger.warning("Couldn't restart pvpi_telemetry.service: %s", done.stderr.strip())
+
+
 class _Handler(BaseHTTPRequestHandler):
     server: DashboardServer
 
@@ -386,15 +397,18 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _bms(self) -> None:
         """The latest BMS readings the telemetry service saved; 404 when no BMS is set up."""
-        if self.server.config.bms_address is None:
-            self._json(404, {"error": "No BMS: set bms_address in the config"})
+        config = self.server.config
+        if config.bms_address is None:
+            self._json(404, {"error": "No BMS: set bms_address in the config", "configured": False})
             return
         try:
-            readings = json.loads((Path(self.server.config.data_log_path) / BMS_FILE).read_text())
-        except (OSError, ValueError):
+            readings = json.loads((Path(config.data_log_path) / BMS_FILE).read_text())
+            age = (datetime.now().astimezone() - datetime.fromisoformat(readings["time"])).total_seconds()
+        except (OSError, ValueError, KeyError, TypeError):
             self._json(503, {"error": "No BMS readings yet: is the pvpi_telemetry service running?"})
             return
-        self._json(200, readings)
+        # Older than three readings: the BMS can't be read now, or the service has stopped.
+        self._json(200, {**readings, "age": round(age), "stale": age > 3 * config.telemetry_period})
 
     def _config_view(self) -> dict:
         config = self._disk_config()
@@ -445,9 +459,7 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 config = self._disk_config()
                 config.load_schedule()
-                # The telemetry service only when installed: one set up before it existed has none.
-                services = [s for s in SERVICES if s != "pvpi_dashboard.service" and (_SYSTEMD_DIR / s).exists()]
-                command = ["systemctl", "restart", *(services or ["pvpi_uart.service", "pvpi_manager.service"])]
+                command = ["systemctl", "restart", "pvpi_uart.service", "pvpi_manager.service"]
                 if os.geteuid() != 0:
                     command = ["sudo", "-n", *command]
                 with self.server._lock:
@@ -455,6 +467,8 @@ class _Handler(BaseHTTPRequestHandler):
                     self.server._live = None
                     subprocess.run(command, check=True, capture_output=True, text=True, timeout=30)
                     self.server.config = config
+                if is_installed("pvpi_telemetry.service"):
+                    _restart_telemetry()
                 self._json(200, self._config_view())
             except (OSError, ValueError, subprocess.SubprocessError) as err:
                 detail = err.stderr.strip() if isinstance(err, subprocess.CalledProcessError) and err.stderr else str(err)
