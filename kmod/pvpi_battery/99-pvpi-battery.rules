@@ -1,0 +1,11 @@
+# /etc/udev/rules.d/99-pvpi-battery.rules
+# Let the dialout group (pvpi_manager's user is in it, for the UART) write the PV PI readings,
+# like the backlight rules do for the video group. A power supply loaded after boot sends no
+# "add" event (its properties can't be read yet), only "change" ones: the TEST makes the rule
+# run on the first of them, not on every reading.
+SUBSYSTEM=="power_supply", KERNEL=="pvpi-battery", ACTION!="remove", TEST{0020}!="status", \
+  RUN+="/bin/chgrp dialout $sys$devpath/status $sys$devpath/present $sys$devpath/voltage_now $sys$devpath/current_now $sys$devpath/capacity $sys$devpath/capacity_level $sys$devpath/temp", \
+  RUN+="/bin/chmod g+w $sys$devpath/status $sys$devpath/present $sys$devpath/voltage_now $sys$devpath/current_now $sys$devpath/capacity $sys$devpath/capacity_level $sys$devpath/temp"
+SUBSYSTEM=="power_supply", KERNEL=="pvpi-pv", ACTION!="remove", TEST{0020}!="online", \
+  RUN+="/bin/chgrp dialout $sys$devpath/online $sys$devpath/voltage_now $sys$devpath/current_now", \
+  RUN+="/bin/chmod g+w $sys$devpath/online $sys$devpath/voltage_now $sys$devpath/current_now"
