@@ -65,6 +65,7 @@ const GROUPS = [
   ["Clocks", { time_pi2mcu: "Set PV Pi time from Raspberry Pi at startup", time_mcu2pi: "Set Raspberry Pi time from PV Pi at startup" }],
   ["Connection and dashboard", { uart_port: "UART port", schedules_dir: "Schedule folder", full_dashboard: "Show history charts" }],
   ["System battery", { system_battery: "Show the battery to the system" }],
+  ["BMS", { bms_address: "BMS Bluetooth address", bms_type: "BMS type (aiobmsble module)", telemetry_period: "Reading interval (seconds)" }],
 ];
 let original, dirty = false, writable = false;
 const inputs = new Map();

@@ -64,3 +64,8 @@ def test_schedules_are_next_to_the_config_and_an_unworkable_one_is_refused(tmp_p
     config.schedule = "missing"
     with pytest.raises(FileNotFoundError):
         config.load_schedule()
+
+
+def test_mqtt_password_is_next_to_the_config(tmp_path):
+    config = PvPiConfig.from_file(str(tmp_path / "config.json"))
+    assert config.mqtt_password_path == tmp_path / "mqtt-password"

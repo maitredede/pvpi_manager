@@ -47,8 +47,10 @@ def dashboard(tmp_path):
     """Start a dashboard; returns get(path) -> (status, JSON body or page text)."""
     servers = []
 
-    def start(board=None, full_dashboard=True):
-        PvPiConfig(data_log_path=tmp_path / "logs", full_dashboard=full_dashboard).save(tmp_path / "config.json")
+    def start(board=None, full_dashboard=True, **settings):
+        PvPiConfig(data_log_path=tmp_path / "logs", full_dashboard=full_dashboard, **settings).save(
+            tmp_path / "config.json"
+        )
         config = PvPiConfig.from_file(str(tmp_path / "config.json"))
         server = DashboardServer(("127.0.0.1", 0), config, make_client=lambda: PvPiClient(interface=board or Board()))
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -274,6 +276,7 @@ def test_clock_sync_uses_the_raspberry_pi_clock(dashboard):
 def test_restart_services_applies_saved_settings_and_reports_failure(dashboard, tmp_path, monkeypatch):
     import subprocess
 
+    monkeypatch.setattr("pvpi.services.dashboard._SYSTEMD_DIR", tmp_path / "systemd")  # no units installed
     get = dashboard()
     config_path = tmp_path / "config.json"
     saved = PvPiConfig.from_file(str(config_path))
@@ -297,3 +300,43 @@ def test_restart_services_applies_saved_settings_and_reports_failure(dashboard, 
     status, answer = get("/api/services/restart", "POST", {})
     assert status == 503 and "permission denied" in answer["error"]
     assert get("/")[0] == 200
+
+
+def test_restart_services_includes_installed_telemetry(dashboard, tmp_path, monkeypatch):
+    units = tmp_path / "systemd"
+    units.mkdir()
+    for name in ("pvpi_uart.service", "pvpi_manager.service", "pvpi_telemetry.service", "pvpi_dashboard.service"):
+        (units / name).write_text("")
+    monkeypatch.setattr("pvpi.services.dashboard._SYSTEMD_DIR", units)
+    calls = []
+    monkeypatch.setattr("pvpi.services.dashboard.subprocess.run", lambda command, **kwargs: calls.append(command))
+    get = dashboard()
+    assert get("/api/services/restart", "POST", {})[0] == 200
+    assert calls[0][-5:] == [
+        "systemctl",
+        "restart",
+        "pvpi_uart.service",
+        "pvpi_manager.service",
+        "pvpi_telemetry.service",
+    ]
+
+
+def test_bms_readings(dashboard, tmp_path):
+    assert dashboard()("/api/bms")[0] == 404  # no BMS set up
+    get = dashboard(bms_address="D0:18:04:01:3F:7D")
+    status, answer = get("/api/bms")
+    assert status == 503 and "pvpi_telemetry" in answer["error"]
+    (tmp_path / "logs").mkdir(exist_ok=True)
+    (tmp_path / "logs" / "bms.json").write_text('{"time": "2026-10-29T20:00:00", "bms_soc": 87}')
+    assert get("/api/bms") == (200, {"time": "2026-10-29T20:00:00", "bms_soc": 87})
+
+
+def test_mqtt_settings_are_not_changed_from_the_dashboard(dashboard, tmp_path):
+    get = dashboard()
+    original = get("/api/config")[1]["values"]
+    unchanged = {"mqtt_host": original["mqtt_host"], "keep_for_days": 14}
+    assert get("/api/config", "PUT", {"original": original, "values": unchanged})[0] == 200
+    original = get("/api/config")[1]["values"]
+    status, answer = get("/api/config", "PUT", {"original": original, "values": {"mqtt_host": "elsewhere"}})
+    assert status == 400 and "config file" in answer["error"]
+    assert PvPiConfig.from_file(str(tmp_path / "config.json")).mqtt_host is None

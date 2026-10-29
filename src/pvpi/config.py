@@ -14,6 +14,7 @@ from pvpi.schedule import Schedule
 from pvpi.utils import default_uart_port
 
 SCHEDULE_NAME = r"^[A-Za-z0-9_-]+$"
+BT_ADDRESS = r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$"
 _REPLACED = ("schedule_time", "shutdown_time", "wakeup_time")
 
 
@@ -89,6 +90,26 @@ class PvPiConfig(BaseSettings, extra="forbid"):
         "needs the pvpi_battery kernel module",
     )
 
+    # Telemetry: a battery BMS read over Bluetooth, and the readings sent to Home Assistant over MQTT
+    bms_address: str | None = Field(
+        None, pattern=BT_ADDRESS, description="Bluetooth address of the battery's BMS; empty to read none"
+    )
+    bms_type: str = Field(
+        "daly_bms", pattern=r"^[a-z0-9_]+$", description="The BMS's aiobmsble module, e.g. daly_bms or jbd_bms"
+    )
+    telemetry_period: int = Field(
+        30, description="Seconds between BMS readings and MQTT updates (10 to 3600)", ge=10, le=3600
+    )
+    mqtt_host: str | None = Field(None, description="MQTT broker to send the readings to; empty to send none")
+    mqtt_port: int = Field(1883, description="The MQTT broker's port", ge=1, le=65535)
+    mqtt_username: str | None = Field(None, description="MQTT user name; empty for none")
+    mqtt_topic: str = Field(
+        "pvpi", pattern=r"^[A-Za-z0-9_-]+$", description="First level of the MQTT topics the readings are sent to"
+    )
+    mqtt_discovery_prefix: str = Field(
+        "homeassistant", pattern=r"^[A-Za-z0-9_-]+$", description="Home Assistant's MQTT discovery prefix"
+    )
+
     _source: Path | None = PrivateAttr(None)  # the file it was read from
 
     @model_validator(mode="before")
@@ -126,6 +147,12 @@ class PvPiConfig(BaseSettings, extra="forbid"):
         """The shortest off period: time for the Pi to shut down and the power to go off before
         the wake alarm."""
         return timedelta(seconds=self.power_off_delay + 60)
+
+    @property
+    def mqtt_password_path(self) -> Path:
+        """The MQTT password's file: next to this config, as the dashboard shows the config to anyone."""
+        folder = self._source.parent if self._source is not None else Path(user_config_dir("pvpi"))
+        return folder / "mqtt-password"
 
     def schedule_path(self, name: str) -> Path:
         return self.schedules_folder / f"{name}.json"

@@ -18,6 +18,10 @@ dependencies = [
     "pyzmq>=26",
 ]
 
+[project.optional-dependencies]
+bms = ["aiobmsble>=0.32.0; python_version >= '3.12'"]  # a battery BMS read over Bluetooth (pvpi telemetry)
+mqtt = ["paho-mqtt>=2.1.0"]  # the readings sent to Home Assistant (pvpi telemetry)
+
 [dependency-groups]
 dev = [
     "pytest>=8",

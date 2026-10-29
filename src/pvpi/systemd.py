@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pvpi.utils import is_linux
 
-SERVICES = ["pvpi_uart.service", "pvpi_manager.service", "pvpi_dashboard.service"]
+SERVICES = ["pvpi_uart.service", "pvpi_manager.service", "pvpi_telemetry.service", "pvpi_dashboard.service"]
 _SERVICES = SERVICES  # its old name
 _SYSTEMD_DIR = Path("/etc/systemd/system")
 
@@ -95,6 +95,27 @@ def _render_service(name: str, user: str, exec_start: str) -> str:
             f"ExecStart={exec_start}\n"
             "Restart=always\n"
             "RestartSec=10\n"
+            "\n"
+            "[Install]\n"
+            "WantedBy=multi-user.target\n"
+        )
+
+    if name == "pvpi_telemetry.service":
+        # Exits at once, and stays stopped, while neither the BMS nor MQTT is set up.
+        return (
+            "[Unit]\n"
+            "Description=PV PI Telemetry (BMS and MQTT)\n"
+            "After=pvpi_uart.service bluetooth.service network-online.target\n"
+            "Wants=network-online.target\n"
+            "\n"
+            "[Service]\n"
+            "Type=simple\n"
+            f"User={user}\n"
+            f"Group={user}\n"
+            f"ExecStart={exec_start}\n"
+            "Restart=on-failure\n"
+            "RestartSec=30\n"
+            "Environment=PYTHONUNBUFFERED=1\n"
             "\n"
             "[Install]\n"
             "WantedBy=multi-user.target\n"
@@ -193,6 +214,8 @@ def install_systemd(config_path: Path | None = None, dashboard: bool | None = No
             exec_start = make_exec_start("uart-proxy")
         elif name == "pvpi_manager.service":
             exec_start = make_exec_start("manager")
+        elif name == "pvpi_telemetry.service":
+            exec_start = make_exec_start("telemetry")
         elif name == "pvpi_dashboard.service":
             exec_start = make_exec_start("dashboard")
         else:
