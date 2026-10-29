@@ -263,14 +263,30 @@ class MqttPublisher:
                 password = None
             self._client.username_pw_set(config.mqtt_username, password)
         self._client.on_connect = self._on_connect
+        self._client.on_connect_fail = self._on_connect_fail
+        self._client.on_disconnect = self._on_disconnect
+        self._connected = None  # None until the first try: then each change is logged once
+        _logger.info("Sending the readings to MQTT %s:%i", config.mqtt_host, config.mqtt_port)
         self._client.connect_async(config.mqtt_host, config.mqtt_port)
         self._client.loop_start()
 
+    def _lost(self, why: str) -> None:
+        if self._connected is not False:
+            _logger.warning("No MQTT connection (%s): trying again", why)
+        self._connected = False
+
+    def _on_connect_fail(self, client, userdata) -> None:
+        self._lost("can't reach the broker")
+
+    def _on_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
+        self._lost(str(reason_code))
+
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
         if reason_code.is_failure:
-            _logger.warning("MQTT broker refused the connection: %s", reason_code)
+            self._lost(f"refused: {reason_code}")
             return
         _logger.info("Connected to the MQTT broker %s:%i", self.config.mqtt_host, self.config.mqtt_port)
+        self._connected = True
         client.publish(f"{self.base}/status", "online", retain=True)
         for topic, payload in self._discovered.items():
             client.publish(topic, payload, retain=True)
@@ -308,6 +324,8 @@ async def run_async(config: PvPiConfig) -> None:
         _logger.info("Nothing to do: set bms_address and/or mqtt_host in the config")
         return
     host = _host()
+    if config.bms_address:
+        _logger.info("Reading the %s BMS %s every %is", config.bms_type, config.bms_address, config.telemetry_period)
     bms = BmsReader(config.bms_address, config.bms_type) if config.bms_address else None
     publisher = MqttPublisher(config, host) if config.mqtt_host else None
     client: PvPiClient | None = None
